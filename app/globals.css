@@ -1,0 +1,31 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  * {
+    -webkit-tap-highlight-color: transparent;
+  }
+
+  html {
+    /* Smooth scrolling on iOS */
+    -webkit-overflow-scrolling: touch;
+  }
+
+  body {
+    @apply bg-zinc-50 text-zinc-900;
+    /* Prevent layout shift from scrollbar appearing */
+    overflow-y: scroll;
+  }
+}
+
+@layer utilities {
+  /* Safe area insets for iPhone home indicator */
+  .pb-safe {
+    padding-bottom: max(0.5rem, env(safe-area-inset-bottom));
+  }
+
+  .pt-safe {
+    padding-top: env(safe-area-inset-top);
+  }
+}
