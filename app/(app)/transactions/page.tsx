@@ -117,7 +117,16 @@ export default async function TransactionsPage({ searchParams }: Props) {
   )
 }
 
-function TransactionRow({ tx }: { tx: Record<string, any> }) {
+interface TxRow {
+  id: string
+  amount: number
+  payee: string | null
+  description: string | null
+  date: string
+  budget_categories: { name: string } | null
+}
+
+function TransactionRow({ tx }: { tx: TxRow }) {
   const isCredit = tx.amount > 0
   const label = tx.payee || tx.description || 'Unknown'
   const categoryName = tx.budget_categories?.name
