@@ -9,7 +9,10 @@ import type { UnifiedTransaction } from '@/lib/types'
 export async function saveTransactions(params: {
   transactions: UnifiedTransaction[]
   bank: string
-  rawText: string
+  /** Raw source text — used to compute fileHash if fileHash not provided */
+  rawText?: string
+  /** Pre-computed SHA-256 hex hash — use this for PDF imports to avoid resending large payloads */
+  fileHash?: string
   sourceName: string
 }): Promise<{ success?: boolean; count?: number; error?: string; skipped?: boolean }> {
   const cookieStore = await cookies()
@@ -17,7 +20,7 @@ export async function saveTransactions(params: {
   if (!householdId) return { error: 'No household found' }
 
   const { transactions, bank, rawText, sourceName } = params
-  const fileHash = createHash('sha256').update(rawText).digest('hex')
+  const fileHash = params.fileHash ?? createHash('sha256').update(rawText ?? '').digest('hex')
   const supabase = await createClient()
 
   // Soft-skip duplicates
