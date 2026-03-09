@@ -1,8 +1,11 @@
 -- ============================================================
--- HOME BASE — Supabase Schema (Clerk auth edition)
+-- HOME BASE — Supabase Schema (Clerk auth, no profiles table)
 -- Run this in the Supabase SQL editor (Dashboard → SQL Editor)
--- NOTE: profiles.id is a Clerk user ID (text, e.g. user_2abc123)
---       No Supabase auth.users — Clerk handles all authentication.
+--
+-- Auth is handled entirely by Clerk. household_id is stored in
+-- Clerk's publicMetadata and embedded in the JWT via a Clerk
+-- JWT template named "supabase". Supabase RLS reads it directly
+-- from the JWT claim — no profiles table needed.
 -- ============================================================
 
 -- ============================================================
@@ -13,16 +16,6 @@ create table if not exists households (
   name                  text not null,
   inbound_email_token   text unique default encode(gen_random_bytes(12), 'hex'),
   created_at            timestamptz default now()
-);
-
--- ============================================================
--- PROFILES  (one row per Clerk user)
--- ============================================================
-create table if not exists profiles (
-  id            text primary key,  -- Clerk user ID (e.g. user_2abc123)
-  household_id  uuid references households on delete set null,
-  display_name  text not null,
-  created_at    timestamptz default now()
 );
 
 -- ============================================================
@@ -162,7 +155,7 @@ create table if not exists inbound_emails (
 create table if not exists push_subscriptions (
   id            uuid primary key default gen_random_uuid(),
   household_id  uuid not null references households on delete cascade,
-  profile_id    text not null references profiles on delete cascade,
+  clerk_user_id text not null,
   endpoint      text not null unique,
   p256dh        text not null,
   auth          text not null,
@@ -175,7 +168,7 @@ create table if not exists push_subscriptions (
 create table if not exists notifications (
   id            uuid primary key default gen_random_uuid(),
   household_id  uuid not null references households on delete cascade,
-  profile_id    text not null references profiles on delete cascade,
+  clerk_user_id text not null,
   type          text check (type in (
                   'bill_due',
                   'budget_exceeded',
@@ -193,7 +186,6 @@ create table if not exists notifications (
 -- ROW LEVEL SECURITY
 -- ============================================================
 alter table households          enable row level security;
-alter table profiles            enable row level security;
 alter table budget_groups       enable row level security;
 alter table budget_categories   enable row level security;
 alter table budget_items        enable row level security;
@@ -205,22 +197,18 @@ alter table inbound_emails      enable row level security;
 alter table push_subscriptions  enable row level security;
 alter table notifications       enable row level security;
 
--- Helper: returns the caller's household_id
--- Reads Clerk user ID from JWT sub claim (NOT auth.uid() which casts to uuid)
+-- Helper: reads household_id directly from the Clerk JWT claim.
+-- Requires the Clerk "supabase" JWT template to include:
+--   { "household_id": "{{user.public_metadata.household_id}}" }
 create or replace function my_household_id()
 returns uuid language sql security definer stable as $$
-  select household_id from profiles where id = (auth.jwt() ->> 'sub')
+  select (auth.jwt() ->> 'household_id')::uuid
 $$;
 
--- profiles: users can only access their own row
-create policy "own profile" on profiles
-  for all using (id = (auth.jwt() ->> 'sub'));
-
--- households: members can read/write their own household
+-- All tables scoped to household via JWT claim — no DB lookup needed
 create policy "own household" on households
   for all using (id = my_household_id());
 
--- everything else: scoped to household membership
 create policy "household members only" on budget_groups
   for all using (household_id = my_household_id());
 
@@ -257,4 +245,3 @@ create policy "household members only" on notifications
 create index if not exists transactions_household_date on transactions (household_id, date desc);
 create index if not exists transactions_category on transactions (category_id);
 create index if not exists bills_household_due on bills (household_id, next_due_date);
-create index if not exists notifications_profile_unread on notifications (profile_id, read_at) where read_at is null;

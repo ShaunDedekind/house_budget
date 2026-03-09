@@ -4,16 +4,19 @@ import { createClient } from '@/lib/supabase/server'
 
 export async function TopBar() {
   const clerkUser = await currentUser()
+  const displayName = clerkUser?.fullName || clerkUser?.firstName || ''
+  const householdId = clerkUser?.publicMetadata?.household_id as string | undefined
 
-  const supabase = await createClient()
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('display_name, households(name)')
-    .eq('id', clerkUser?.id ?? '')
-    .single()
-
-  const raw = profile?.households
-  const householdName = (Array.isArray(raw) ? raw[0]?.name : (raw as { name: string } | null | undefined)?.name) ?? 'Home Base'
+  let householdName = 'Home Base'
+  if (householdId) {
+    const supabase = await createClient()
+    const { data: household } = await supabase
+      .from('households')
+      .select('name')
+      .eq('id', householdId)
+      .single()
+    householdName = household?.name ?? 'Home Base'
+  }
 
   return (
     <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-zinc-100">
@@ -28,7 +31,7 @@ export async function TopBar() {
         </div>
 
         <div className="flex items-center gap-3">
-          <span className="text-sm text-zinc-500">{profile?.display_name}</span>
+          <span className="text-sm text-zinc-500">{displayName}</span>
           <UserButton afterSignOutUrl="/sign-in" />
         </div>
       </div>
