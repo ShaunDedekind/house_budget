@@ -1,0 +1,80 @@
+Clarified product direction (based on your answers)
+Stage now: Prototype only, focus on experience + processing + backend, auth can wait.
+Core v1 loop:
+Set up a 50/30/20‑style budget template (groups + categories + amounts).
+Import transactions (single unified import flow) and auto‑categorise via LLM.
+Compare actuals vs budget and “score” your finances (simple, opinionated scoring).
+Future, not first:
+Email scraping/forwarding for bills, utilities, rates, etc., to build a recurring‑bills view.
+Real auth (Clerk + JWT) and richer notifications.
+Proposed MVP implementation roadmap
+1. Budget template & data model usage (you already have schema)
+Use existing tables: budget_groups, budget_categories, budget_items.
+MVP UI screens:
+Budget overview page:
+Shows 50/30/20 groups with target % and sum of monthly equivalents.
+Lists categories under each group with their monthly budget amounts.
+Simple editor:
+Add/edit categories (name, owner, is_savings/is_personal, group).
+Add/edit a single active budget_items row per category (frequency → monthly equivalent).
+Scoring groundwork:
+Compute total monthly budget and the split per group (50/30/20).
+2. Unify import into a single flow
+Keep both engines, unify UX:
+One /import experience with:
+Mode A: Paste statement text → Claude (parseStatementText).
+Mode B: Upload CSV → parseCSV.
+Both should converge to one in‑memory “parsed transaction list” shape that then goes through one save path (so you don’t have separate behaviors).
+Internally:
+Standardise on a shared ParsedTransaction type that both engines output.
+Have one saveTransactions server action that handles:
+Duplicate detection via hash.
+Creating import_batches.
+Inserting into transactions.
+(You’re already very close to this; it’s mostly consolidation and UI simplification.)
+
+3. LLM‑based automatic categorisation
+MVP approach:
+After import, run a second LLM pass that:
+Knows about your current budget_categories (name, group, maybe owner).
+For each transaction (description, payee, amount), chooses one category ID or “uncategorised”.
+Write back:
+transactions.category_id,
+categorised_by = 'claude'.
+UX:
+On /transactions:
+Show category labels under each transaction (you already have the join).
+Mark “uncategorised” clearly.
+Later, add a simple inline override (dropdown) that calls updateTransactionCategory.
+4. Actuals vs budget + scoring
+Actuals:
+For a given month:
+Aggregate transactions by category_id and then by group.
+Compute total spent (probably only debits) per category and per group.
+Compare vs budget:
+For each category:
+show spent / budget and a simple status (under, on‑track, over).
+For each group (50/30/20):
+show actual % of total income/spend vs target_pct.
+Score:
+Start with something intentionally simple, e.g.:
+Score 0–100 where:
+60% from “stayed within budget per category, weighted by amount”.
+40% from “distance from 50/30/20 targets”.
+Show a single monthly score on the dashboard plus a short, human sentence:
+“You’re slightly over in House Expenses but under in Personal; savings are on track.”
+5. Future: email scraping & bills (backlog, but schema is ready)
+When you’re ready:
+
+Build pages around bills and inbound_emails.
+Add a simple “Bill list”:
+name, amount, frequency, next_due_date.
+Wire an ingestion path from forwarded emails into inbound_emails, then a small LLM that:
+Extracts amount, due date, biller and either:
+Links to an existing bill, or
+Suggests creating a new one.
+6. Auth & production hardening (later)
+Integrate Clerk with Supabase JWT template as your schema comments describe.
+Replace the household_id cookie hack with:
+my_household_id() reading from the JWT.
+Ensure all RLS policies match the new auth story.
