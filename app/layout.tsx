@@ -1,6 +1,5 @@
 import type { Metadata, Viewport } from 'next'
 import localFont from 'next/font/local'
-import { ClerkProvider } from '@clerk/nextjs'
 import { ServiceWorkerRegister } from '@/components/pwa/service-worker-register'
 import './globals.css'
 
@@ -36,10 +35,8 @@ export default function RootLayout({ children }: { children: React.ReactNode }) 
         <link rel="apple-touch-icon" href="/icons/icon-192.png" />
       </head>
       <body className={`${geist.variable} font-[family-name:var(--font-geist)] antialiased bg-zinc-50 text-zinc-900`}>
-        <ClerkProvider afterSignInUrl="/dashboard" afterSignUpUrl="/setup">
-          <ServiceWorkerRegister />
-          {children}
-        </ClerkProvider>
+        <ServiceWorkerRegister />
+        {children}
       </body>
     </html>
   )

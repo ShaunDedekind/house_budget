@@ -2,17 +2,13 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
-import { auth, clerkClient } from '@clerk/nextjs/server'
+import { cookies } from 'next/headers'
 import { createClient } from '@supabase/supabase-js'
 
 export async function createHousehold(formData: FormData) {
-  const { userId } = await auth()
-  if (!userId) redirect('/sign-in')
-
   const name = formData.get('name') as string
   if (!name?.trim()) return { error: 'Household name is required' }
 
-  // Use service role: user has no household_id in JWT yet, so RLS would block
   const supabase = createClient(
     process.env.NEXT_PUBLIC_SUPABASE_URL!,
     process.env.SUPABASE_SERVICE_ROLE_KEY!
@@ -37,10 +33,12 @@ export async function createHousehold(formData: FormData) {
 
   if (groupError) return { error: groupError.message }
 
-  // Save household_id to Clerk publicMetadata
-  // This gets embedded in the JWT on next sign-in / session refresh
-  await (await clerkClient()).users.updateUser(userId, {
-    publicMetadata: { household_id: household.id },
+  // Store household_id in a cookie
+  const cookieStore = await cookies()
+  cookieStore.set('household_id', household.id, {
+    httpOnly: true,
+    sameSite: 'lax',
+    path: '/',
   })
 
   revalidatePath('/', 'layout')

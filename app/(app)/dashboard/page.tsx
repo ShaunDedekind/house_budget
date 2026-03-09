@@ -1,16 +1,12 @@
-import { currentUser } from '@clerk/nextjs/server'
 import { formatCurrency } from '@/lib/utils'
 
 export default async function DashboardPage() {
-  const clerkUser = await currentUser()
-  const displayName = clerkUser?.fullName || clerkUser?.firstName || 'there'
-
   return (
     <div className="flex flex-col gap-6">
       {/* Greeting */}
       <div>
         <h1 className="text-2xl font-semibold text-zinc-900">
-          Hey {displayName} 👋
+          Hey there 👋
         </h1>
         <p className="text-sm text-zinc-500 mt-0.5">
           {new Date().toLocaleDateString('en-NZ', { weekday: 'long', month: 'long', day: 'numeric' })}

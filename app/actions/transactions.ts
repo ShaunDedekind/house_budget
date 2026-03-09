@@ -2,17 +2,14 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { cookies } from 'next/headers'
 import { createHash } from 'crypto'
-import { auth, currentUser } from '@clerk/nextjs/server'
 import { createClient } from '@/lib/supabase/server'
 import { parseCSV } from '@/lib/csv-parsers'
 
 export async function importTransactions(formData: FormData) {
-  const { userId } = await auth()
-  if (!userId) redirect('/sign-in')
-
-  const clerkUser = await currentUser()
-  const householdId = clerkUser?.publicMetadata?.household_id as string | undefined
+  const cookieStore = await cookies()
+  const householdId = cookieStore.get('household_id')?.value
   if (!householdId) return { error: 'No household found' }
 
   const file = formData.get('file') as File | null
@@ -88,9 +85,6 @@ export async function importTransactions(formData: FormData) {
 }
 
 export async function updateTransactionCategory(id: string, categoryId: string | null) {
-  const { userId } = await auth()
-  if (!userId) return { error: 'Not authenticated' }
-
   const supabase = await createClient()
 
   const { error } = await supabase

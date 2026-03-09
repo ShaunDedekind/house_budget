@@ -1,11 +1,9 @@
-import { currentUser } from '@clerk/nextjs/server'
-import { UserButton } from '@clerk/nextjs'
+import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
 
 export async function TopBar() {
-  const clerkUser = await currentUser()
-  const displayName = clerkUser?.fullName || clerkUser?.firstName || ''
-  const householdId = clerkUser?.publicMetadata?.household_id as string | undefined
+  const cookieStore = await cookies()
+  const householdId = cookieStore.get('household_id')?.value
 
   let householdName = 'Home Base'
   if (householdId) {
@@ -28,11 +26,6 @@ export async function TopBar() {
             </svg>
           </div>
           <span className="text-sm font-semibold text-zinc-900">{householdName}</span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-zinc-500">{displayName}</span>
-          <UserButton afterSignOutUrl="/sign-in" />
         </div>
       </div>
     </header>

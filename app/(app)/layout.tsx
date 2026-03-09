@@ -1,11 +1,11 @@
-import { currentUser } from '@clerk/nextjs/server'
+import { cookies } from 'next/headers'
 import { redirect } from 'next/navigation'
 import { TopBar } from '@/components/nav/top-bar'
 import { BottomNav } from '@/components/nav/bottom-nav'
 
 export default async function AppLayout({ children }: { children: React.ReactNode }) {
-  const user = await currentUser()
-  const householdId = user?.publicMetadata?.household_id as string | undefined
+  const cookieStore = await cookies()
+  const householdId = cookieStore.get('household_id')?.value
 
   if (!householdId) {
     redirect('/setup')
