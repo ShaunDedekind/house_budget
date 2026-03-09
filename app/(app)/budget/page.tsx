@@ -178,7 +178,7 @@ export default async function BudgetPage() {
 
                   {/* Inline budget editor */}
                   <form
-                    action={upsertBudgetItem}
+                    action={upsertBudgetItem as (formData: FormData) => Promise<void>}
                     className="grid grid-cols-[minmax(0,1.2fr)_minmax(0,1.1fr)_auto] gap-2 items-center"
                   >
                     <input type="hidden" name="category_id" value={category.id} />
@@ -218,7 +218,7 @@ export default async function BudgetPage() {
       {/* Add category */}
       <section className="bg-white rounded-2xl border border-zinc-100 p-4 flex flex-col gap-3">
         <h2 className="text-sm font-semibold text-zinc-900">Add category</h2>
-        <form action={createCategory} className="flex flex-col gap-3">
+        <form action={createCategory as (formData: FormData) => Promise<void>} className="flex flex-col gap-3">
           <Input
             id="name"
             name="name"
