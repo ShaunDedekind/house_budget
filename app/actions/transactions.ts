@@ -3,18 +3,20 @@
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
 import { createHash } from 'crypto'
+import { auth } from '@clerk/nextjs/server'
 import { createClient } from '@/lib/supabase/server'
 import { parseCSV } from '@/lib/csv-parsers'
 
 export async function importTransactions(formData: FormData) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/sign-in')
+  const { userId } = await auth()
+  if (!userId) redirect('/sign-in')
+
+  const supabase = await createClient()
 
   const { data: profile } = await supabase
     .from('profiles')
     .select('household_id')
-    .eq('id', user.id)
+    .eq('id', userId)
     .single()
 
   if (!profile?.household_id) return { error: 'No household found' }
@@ -91,9 +93,10 @@ export async function importTransactions(formData: FormData) {
 }
 
 export async function updateTransactionCategory(id: string, categoryId: string | null) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const { userId } = await auth()
+  if (!userId) return { error: 'Not authenticated' }
+
+  const supabase = await createClient()
 
   const { error } = await supabase
     .from('transactions')

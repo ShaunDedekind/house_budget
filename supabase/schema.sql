@@ -1,6 +1,8 @@
 -- ============================================================
--- HOME BASE — Supabase Schema
+-- HOME BASE — Supabase Schema (Clerk auth edition)
 -- Run this in the Supabase SQL editor (Dashboard → SQL Editor)
+-- NOTE: profiles.id is a Clerk user ID (text, e.g. user_2abc123)
+--       No Supabase auth.users — Clerk handles all authentication.
 -- ============================================================
 
 -- ============================================================
@@ -14,32 +16,14 @@ create table if not exists households (
 );
 
 -- ============================================================
--- PROFILES  (one row per auth.users row)
+-- PROFILES  (one row per Clerk user)
 -- ============================================================
 create table if not exists profiles (
-  id            uuid primary key references auth.users on delete cascade,
+  id            text primary key,  -- Clerk user ID (e.g. user_2abc123)
   household_id  uuid references households on delete set null,
   display_name  text not null,
   created_at    timestamptz default now()
 );
-
--- Auto-create a profile on sign-up
-create or replace function handle_new_user()
-returns trigger language plpgsql security definer set search_path = public as $$
-begin
-  insert into profiles (id, display_name)
-  values (
-    new.id,
-    coalesce(new.raw_user_meta_data->>'display_name', split_part(new.email, '@', 1))
-  );
-  return new;
-end;
-$$;
-
-drop trigger if exists on_auth_user_created on auth.users;
-create trigger on_auth_user_created
-  after insert on auth.users
-  for each row execute procedure handle_new_user();
 
 -- ============================================================
 -- BUDGET GROUPS  (50 / 30 / 20 buckets)
@@ -178,7 +162,7 @@ create table if not exists inbound_emails (
 create table if not exists push_subscriptions (
   id            uuid primary key default gen_random_uuid(),
   household_id  uuid not null references households on delete cascade,
-  profile_id    uuid not null references profiles on delete cascade,
+  profile_id    text not null references profiles on delete cascade,
   endpoint      text not null unique,
   p256dh        text not null,
   auth          text not null,
@@ -191,7 +175,7 @@ create table if not exists push_subscriptions (
 create table if not exists notifications (
   id            uuid primary key default gen_random_uuid(),
   household_id  uuid not null references households on delete cascade,
-  profile_id    uuid not null references profiles on delete cascade,
+  profile_id    text not null references profiles on delete cascade,
   type          text check (type in (
                   'bill_due',
                   'budget_exceeded',
@@ -221,21 +205,22 @@ alter table inbound_emails      enable row level security;
 alter table push_subscriptions  enable row level security;
 alter table notifications       enable row level security;
 
--- Helper: returns the caller's household_id (used in all RLS policies)
+-- Helper: returns the caller's household_id
+-- Reads Clerk user ID from JWT sub claim (NOT auth.uid() which casts to uuid)
 create or replace function my_household_id()
 returns uuid language sql security definer stable as $$
-  select household_id from profiles where id = auth.uid()
+  select household_id from profiles where id = (auth.jwt() ->> 'sub')
 $$;
 
--- profiles: users can read/update their own row only
+-- profiles: users can only access their own row
 create policy "own profile" on profiles
-  for all using (id = auth.uid());
+  for all using (id = (auth.jwt() ->> 'sub'));
 
--- households: members can read their own household
+-- households: members can read/write their own household
 create policy "own household" on households
   for all using (id = my_household_id());
 
--- everything else: scoped to household
+-- everything else: scoped to household membership
 create policy "household members only" on budget_groups
   for all using (household_id = my_household_id());
 

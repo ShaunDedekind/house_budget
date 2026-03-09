@@ -1,14 +1,15 @@
+import { auth } from '@clerk/nextjs/server'
 import { createClient } from '@/lib/supabase/server'
 import { formatCurrency } from '@/lib/utils'
 
 export default async function DashboardPage() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
+  const { userId } = await auth()
 
+  const supabase = await createClient()
   const { data: profile } = await supabase
     .from('profiles')
     .select('display_name, household_id')
-    .eq('id', user?.id ?? '')
+    .eq('id', userId ?? '')
     .single()
 
   return (

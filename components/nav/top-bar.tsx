@@ -1,12 +1,15 @@
+import { currentUser } from '@clerk/nextjs/server'
+import { UserButton } from '@clerk/nextjs'
 import { createClient } from '@/lib/supabase/server'
-import { signOut } from '@/app/actions/auth'
 
 export async function TopBar() {
-  const supabase = createClient()
+  const clerkUser = await currentUser()
+
+  const supabase = await createClient()
   const { data: profile } = await supabase
     .from('profiles')
     .select('display_name, households(name)')
-    .eq('id', (await supabase.auth.getUser()).data.user?.id ?? '')
+    .eq('id', clerkUser?.id ?? '')
     .single()
 
   const raw = profile?.households
@@ -26,14 +29,7 @@ export async function TopBar() {
 
         <div className="flex items-center gap-3">
           <span className="text-sm text-zinc-500">{profile?.display_name}</span>
-          <form action={signOut}>
-            <button
-              type="submit"
-              className="text-xs text-zinc-400 hover:text-zinc-600 transition-colors px-2 py-1 rounded-lg hover:bg-zinc-100"
-            >
-              Sign out
-            </button>
-          </form>
+          <UserButton afterSignOutUrl="/sign-in" />
         </div>
       </div>
     </header>
