@@ -1,16 +1,20 @@
+import { cookies } from 'next/headers'
 import { createClient } from '@/lib/supabase/server'
-import { signOut } from '@/app/actions/auth'
 
 export async function TopBar() {
-  const supabase = createClient()
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('display_name, households(name)')
-    .eq('id', (await supabase.auth.getUser()).data.user?.id ?? '')
-    .single()
+  const cookieStore = await cookies()
+  const householdId = cookieStore.get('household_id')?.value
 
-  const raw = profile?.households
-  const householdName = (Array.isArray(raw) ? raw[0]?.name : (raw as { name: string } | null | undefined)?.name) ?? 'Home Base'
+  let householdName = 'Home Base'
+  if (householdId) {
+    const supabase = await createClient()
+    const { data: household } = await supabase
+      .from('households')
+      .select('name')
+      .eq('id', householdId)
+      .single()
+    householdName = household?.name ?? 'Home Base'
+  }
 
   return (
     <header className="sticky top-0 z-40 bg-white/80 backdrop-blur-md border-b border-zinc-100">
@@ -22,18 +26,6 @@ export async function TopBar() {
             </svg>
           </div>
           <span className="text-sm font-semibold text-zinc-900">{householdName}</span>
-        </div>
-
-        <div className="flex items-center gap-3">
-          <span className="text-sm text-zinc-500">{profile?.display_name}</span>
-          <form action={signOut}>
-            <button
-              type="submit"
-              className="text-xs text-zinc-400 hover:text-zinc-600 transition-colors px-2 py-1 rounded-lg hover:bg-zinc-100"
-            >
-              Sign out
-            </button>
-          </form>
         </div>
       </div>
     </header>

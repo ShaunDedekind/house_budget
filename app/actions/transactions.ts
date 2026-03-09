@@ -2,22 +2,15 @@
 
 import { revalidatePath } from 'next/cache'
 import { redirect } from 'next/navigation'
+import { cookies } from 'next/headers'
 import { createHash } from 'crypto'
 import { createClient } from '@/lib/supabase/server'
 import { parseCSV } from '@/lib/csv-parsers'
 
 export async function importTransactions(formData: FormData) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) redirect('/sign-in')
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('household_id')
-    .eq('id', user.id)
-    .single()
-
-  if (!profile?.household_id) return { error: 'No household found' }
+  const cookieStore = await cookies()
+  const householdId = cookieStore.get('household_id')?.value
+  if (!householdId) return { error: 'No household found' }
 
   const file = formData.get('file') as File | null
   const bank = formData.get('bank') as 'ANZ' | 'BNZ' | null
@@ -27,11 +20,13 @@ export async function importTransactions(formData: FormData) {
   const content = await file.text()
   const fileHash = createHash('sha256').update(content).digest('hex')
 
+  const supabase = await createClient()
+
   // Duplicate import check
   const { data: existing } = await supabase
     .from('import_batches')
     .select('id')
-    .eq('household_id', profile.household_id)
+    .eq('household_id', householdId)
     .eq('file_hash', fileHash)
     .maybeSingle()
 
@@ -46,11 +41,10 @@ export async function importTransactions(formData: FormData) {
 
   if (parsed.length === 0) return { error: 'No transactions found in the file' }
 
-  // Create import batch
   const { data: batch, error: batchError } = await supabase
     .from('import_batches')
     .insert({
-      household_id: profile.household_id,
+      household_id: householdId,
       bank,
       file_name: file.name,
       file_hash: fileHash,
@@ -66,7 +60,7 @@ export async function importTransactions(formData: FormData) {
     .from('transactions')
     .insert(
       parsed.map(t => ({
-        household_id: profile.household_id,
+        household_id: householdId,
         import_batch_id: batch.id,
         date: t.date,
         amount: t.amount,
@@ -91,9 +85,7 @@ export async function importTransactions(formData: FormData) {
 }
 
 export async function updateTransactionCategory(id: string, categoryId: string | null) {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-  if (!user) return { error: 'Not authenticated' }
+  const supabase = await createClient()
 
   const { error } = await supabase
     .from('transactions')

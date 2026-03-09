@@ -7,7 +7,7 @@ interface Props {
 }
 
 export default async function TransactionsPage({ searchParams }: Props) {
-  const supabase = createClient()
+  const supabase = await createClient()
 
   const now = new Date()
   const monthStr =

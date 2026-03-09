@@ -1,22 +1,12 @@
-import { createClient } from '@/lib/supabase/server'
 import { formatCurrency } from '@/lib/utils'
 
 export default async function DashboardPage() {
-  const supabase = createClient()
-  const { data: { user } } = await supabase.auth.getUser()
-
-  const { data: profile } = await supabase
-    .from('profiles')
-    .select('display_name, household_id')
-    .eq('id', user?.id ?? '')
-    .single()
-
   return (
     <div className="flex flex-col gap-6">
       {/* Greeting */}
       <div>
         <h1 className="text-2xl font-semibold text-zinc-900">
-          Hey {profile?.display_name} 👋
+          Hey there 👋
         </h1>
         <p className="text-sm text-zinc-500 mt-0.5">
           {new Date().toLocaleDateString('en-NZ', { weekday: 'long', month: 'long', day: 'numeric' })}
