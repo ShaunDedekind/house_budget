@@ -122,11 +122,10 @@ export async function parseStatementPdf(base64: string): Promise<ParseResult> {
       {
         role: 'user',
         content: [
-          // eslint-disable-next-line @typescript-eslint/no-explicit-any
           {
             type: 'document',
             source: { type: 'base64', media_type: 'application/pdf', data: base64 },
-          } as any,
+          } as any, // eslint-disable-line @typescript-eslint/no-explicit-any
           { type: 'text', text: PDF_USER_PROMPT },
         ],
       },
