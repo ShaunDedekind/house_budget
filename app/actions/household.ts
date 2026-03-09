@@ -39,7 +39,7 @@ export async function createHousehold(formData: FormData) {
 
   // Save household_id to Clerk publicMetadata
   // This gets embedded in the JWT on next sign-in / session refresh
-  await clerkClient.users.updateUser(userId, {
+  await (await clerkClient()).users.updateUser(userId, {
     publicMetadata: { household_id: household.id },
   })
 
