@@ -3,10 +3,12 @@
 import { useState, useRef } from 'react'
 import Link from 'next/link'
 import { parseStatementAction } from '@/app/actions/parse-statement'
-import { saveImportBatch } from '@/app/actions/save-import'
+import { parseCsvAction } from '@/app/actions/parse-csv-action'
+import { parsePdfAction } from '@/app/actions/parse-pdf-action'
+import { saveTransactions } from '@/app/actions/save-transactions'
 import { Button } from '@/components/ui/button'
 import { formatCurrency } from '@/lib/utils'
-import type { ParseResult, LLMTransaction } from '@/lib/llm-parser'
+import type { BatchResult, UnifiedTransaction } from '@/lib/types'
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
@@ -14,7 +16,9 @@ interface StatementBatch {
   id: string
   sourceName: string
   rawText: string
-  result: ParseResult
+  /** Pre-computed SHA-256 hex hash for PDF imports (avoids resending large base64) */
+  fileHash?: string
+  result: BatchResult
   expanded: boolean
 }
 
@@ -32,9 +36,9 @@ function getCoverageWeeks(batches: StatementBatch[]): number {
 }
 
 function getDateRange(batches: StatementBatch[]): { from: string | null; to: string | null } {
-  const dates = batches.flatMap(b =>
-    b.result.transactions.filter(t => t.date).map(t => t.date!)
-  ).sort()
+  const dates = batches
+    .flatMap(b => b.result.transactions.filter(t => t.date).map(t => t.date!))
+    .sort()
   if (dates.length === 0) return { from: null, to: null }
   return { from: dates[0], to: dates[dates.length - 1] }
 }
@@ -80,12 +84,9 @@ function CoverageBar({ batches }: { batches: StatementBatch[] }) {
     <div className="bg-white rounded-2xl border border-zinc-100 p-4 flex flex-col gap-3">
       <div className="flex items-center justify-between">
         <p className="text-sm font-semibold text-zinc-700">Data coverage</p>
-        <span className="text-xs font-medium text-zinc-500">
-          {weeks} / 26 weeks
-        </span>
+        <span className="text-xs font-medium text-zinc-500">{weeks} / 26 weeks</span>
       </div>
 
-      {/* Progress bar */}
       <div className="h-2 bg-zinc-100 rounded-full overflow-hidden">
         <div
           className={`h-full rounded-full transition-all duration-500 ${coverageColor(weeks)}`}
@@ -95,7 +96,6 @@ function CoverageBar({ batches }: { batches: StatementBatch[] }) {
 
       <p className="text-xs text-zinc-500">{coverageLabel(weeks)}</p>
 
-      {/* Stats row */}
       <div className="flex gap-4 pt-1 border-t border-zinc-50">
         <div>
           <p className="text-xs text-zinc-400">Transactions</p>
@@ -118,7 +118,7 @@ function CoverageBar({ batches }: { batches: StatementBatch[] }) {
   )
 }
 
-function TransactionRow({ tx }: { tx: LLMTransaction }) {
+function TransactionRow({ tx }: { tx: UnifiedTransaction }) {
   const isCredit = tx.amount > 0
   return (
     <div className="flex items-center justify-between py-2">
@@ -152,8 +152,7 @@ function BatchCard({
     .filter(t => t.amount < 0)
     .reduce((sum, t) => sum + Math.abs(t.amount), 0)
 
-  // Group by account for display
-  const byAccount: Record<string, LLMTransaction[]> = {}
+  const byAccount: Record<string, UnifiedTransaction[]> = {}
   validTx.forEach(t => {
     const key = t.account || 'Unknown account'
     if (!byAccount[key]) byAccount[key] = []
@@ -162,13 +161,12 @@ function BatchCard({
 
   return (
     <div className="bg-white rounded-2xl border border-zinc-100 overflow-hidden">
-      {/* Card header */}
       <div className="flex items-start justify-between p-4 gap-3">
         <div className="flex flex-col gap-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            {result.bank_detected && (
+            {result.bank && (
               <span className="text-xs font-semibold bg-indigo-100 text-indigo-700 px-2 py-0.5 rounded-full">
-                {result.bank_detected}
+                {result.bank}
               </span>
             )}
             {result.accounts.map(acc => (
@@ -192,7 +190,7 @@ function BatchCard({
               ⚠ {missingDates} transaction{missingDates > 1 ? 's' : ''} skipped (no date)
             </p>
           )}
-          {result.warnings.length > 0 && result.warnings.map((w, i) => (
+          {result.warnings.map((w, i) => (
             <p key={i} className="text-xs text-amber-600 mt-0.5">⚠ {w}</p>
           ))}
         </div>
@@ -223,7 +221,6 @@ function BatchCard({
         </div>
       </div>
 
-      {/* Expanded transaction list */}
       {batch.expanded && (
         <div className="border-t border-zinc-50">
           {Object.entries(byAccount).map(([account, txs]) => (
@@ -238,9 +235,7 @@ function BatchCard({
                   <TransactionRow key={i} tx={tx} />
                 ))}
                 {txs.length > 8 && (
-                  <p className="text-xs text-zinc-400 py-2">
-                    + {txs.length - 8} more transactions
-                  </p>
+                  <p className="text-xs text-zinc-400 py-2">+ {txs.length - 8} more transactions</p>
                 )}
               </div>
             </div>
@@ -255,15 +250,18 @@ function BatchCard({
 
 export default function ImportWizard() {
   const [batches, setBatches] = useState<StatementBatch[]>([])
-  const [inputMode, setInputMode] = useState<'paste' | 'csv'>('paste')
+  const [inputMode, setInputMode] = useState<'pdf' | 'paste' | 'csv'>('pdf')
   const [pasteText, setPasteText] = useState('')
+  const [pdfFile, setPdfFile] = useState<File | null>(null)
   const [csvFile, setCsvFile] = useState<File | null>(null)
+  const [csvBank, setCsvBank] = useState<'ANZ' | 'BNZ'>('ANZ')
   const [parsing, setParsing] = useState(false)
   const [parseError, setParseError] = useState<string | null>(null)
   const [saving, setSaving] = useState(false)
   const [saveError, setSaveError] = useState<string | null>(null)
   const [savedCount, setSavedCount] = useState<number | null>(null)
   const fileInputRef = useRef<HTMLInputElement>(null)
+  const pdfInputRef = useRef<HTMLInputElement>(null)
 
   const totalTransactions = batches.reduce(
     (sum, b) => sum + b.result.transactions.filter(t => t.date).length,
@@ -271,43 +269,95 @@ export default function ImportWizard() {
   )
 
   async function handleParse() {
+    setParseError(null)
+    setParsing(true)
+
+    let result: BatchResult | undefined
     let rawText = ''
+    let fileHash: string | undefined
     let sourceName = ''
 
-    if (inputMode === 'paste') {
+    if (inputMode === 'pdf') {
+      if (!pdfFile) { setParsing(false); return }
+      sourceName = pdfFile.name
+
+      // Read binary → base64 for Claude document API; hash binary for dedup
+      const buffer = await pdfFile.arrayBuffer()
+      const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
+      const hashHex = Array.from(new Uint8Array(hashBuffer))
+        .map(b => b.toString(16).padStart(2, '0'))
+        .join('')
+      fileHash = hashHex
+
+      const bytes = new Uint8Array(buffer)
+      let binary = ''
+      for (let i = 0; i < bytes.byteLength; i++) binary += String.fromCharCode(bytes[i])
+      const base64 = btoa(binary)
+
+      const res = await parsePdfAction({ base64, fileName: pdfFile.name })
+      if (res.error || !res.result) {
+        setParseError(res.error ?? 'Failed to parse PDF')
+        setParsing(false)
+        return
+      }
+      result = res.result
+
+    } else if (inputMode === 'paste') {
       rawText = pasteText.trim()
       sourceName = `Pasted statement ${batches.length + 1}`
+      if (!rawText) { setParsing(false); return }
+
+      const res = await parseStatementAction(rawText)
+      if (res.error || !res.result) {
+        setParseError(res.error ?? 'Unknown error from Claude')
+        setParsing(false)
+        return
+      }
+      result = {
+        bank: res.result.bank_detected,
+        accounts: res.result.accounts,
+        warnings: res.result.warnings,
+        transactions: res.result.transactions.map(t => ({
+          date: t.date,
+          amount: t.amount,
+          description: t.description,
+          payee: null,
+          memo: null,
+          account: t.account || null,
+          raw_data: {},
+        })),
+      }
+
     } else {
-      if (!csvFile) return
+      if (!csvFile) { setParsing(false); return }
       rawText = await csvFile.text()
       sourceName = csvFile.name
+
+      const res = await parseCsvAction({ content: rawText, bank: csvBank })
+      if (res.error || !res.result) {
+        setParseError(res.error ?? 'Failed to parse CSV')
+        setParsing(false)
+        return
+      }
+      result = res.result
     }
 
-    if (!rawText) return
-
-    setParsing(true)
-    setParseError(null)
-
-    const { result, error } = await parseStatementAction(rawText)
     setParsing(false)
 
-    if (error || !result) {
-      setParseError(error ?? 'Unknown error from Claude')
-      return
-    }
-
     if (result.transactions.length === 0) {
-      setParseError('No transactions found. Try copying more of the statement.')
+      setParseError('No transactions found. Try a different file or paste the statement text.')
       return
     }
 
     setBatches(prev => [
       ...prev,
-      { id: crypto.randomUUID(), sourceName, rawText, result, expanded: true },
+      { id: crypto.randomUUID(), sourceName, rawText, fileHash, result, expanded: true },
     ])
     setPasteText('')
+    setPdfFile(null)
     setCsvFile(null)
     if (fileInputRef.current) fileInputRef.current.value = ''
+    if (pdfInputRef.current) pdfInputRef.current.value = ''
   }
 
   async function handleSave() {
@@ -316,11 +366,10 @@ export default function ImportWizard() {
     let count = 0
 
     for (const batch of batches) {
-      const bank = batch.result.bank_detected ?? 'unknown'
-      const res = await saveImportBatch({
+      const res = await saveTransactions({
         transactions: batch.result.transactions,
-        bank,
-        rawText: batch.rawText,
+        bank: batch.result.bank ?? 'unknown',
+        ...(batch.fileHash ? { fileHash: batch.fileHash } : { rawText: batch.rawText }),
         sourceName: batch.sourceName,
       })
       if (res.error) {
@@ -336,16 +385,17 @@ export default function ImportWizard() {
   }
 
   function toggleBatch(id: string) {
-    setBatches(prev =>
-      prev.map(b => (b.id === id ? { ...b, expanded: !b.expanded } : b))
-    )
+    setBatches(prev => prev.map(b => (b.id === id ? { ...b, expanded: !b.expanded } : b)))
   }
 
   function removeBatch(id: string) {
     setBatches(prev => prev.filter(b => b.id !== id))
   }
 
-  const canParse = inputMode === 'paste' ? pasteText.trim().length > 0 : csvFile !== null
+  const canParse =
+    inputMode === 'paste' ? pasteText.trim().length > 0
+    : inputMode === 'pdf' ? pdfFile !== null
+    : csvFile !== null
 
   // ── Success state ──────────────────────────────────────────────────────────
   if (savedCount !== null) {
@@ -403,15 +453,13 @@ export default function ImportWizard() {
         <div>
           <h1 className="text-xl font-semibold text-zinc-900">Import statements</h1>
           <p className="text-xs text-zinc-400 mt-0.5">
-            Paste or upload — Claude detects the format automatically
+            Upload a PDF, paste text, or import a CSV
           </p>
         </div>
       </div>
 
-      {/* Coverage indicator — shown once we have data */}
       {batches.length > 0 && <CoverageBar batches={batches} />}
 
-      {/* Parsed batches */}
       {batches.map(batch => (
         <BatchCard
           key={batch.id}
@@ -430,7 +478,11 @@ export default function ImportWizard() {
 
           {/* Mode toggle */}
           <div className="flex bg-zinc-100 rounded-lg p-1 gap-1">
-            {(['paste', 'csv'] as const).map(mode => (
+            {([
+              { mode: 'pdf', label: 'PDF' },
+              { mode: 'paste', label: 'Paste' },
+              { mode: 'csv', label: 'CSV' },
+            ] as const).map(({ mode, label }) => (
               <button
                 key={mode}
                 type="button"
@@ -441,13 +493,54 @@ export default function ImportWizard() {
                     : 'text-zinc-500 hover:text-zinc-700'
                 }`}
               >
-                {mode === 'paste' ? 'Paste text' : 'Upload CSV'}
+                {label}
               </button>
             ))}
           </div>
         </div>
 
-        {inputMode === 'paste' ? (
+        {inputMode === 'pdf' ? (
+          <div className="flex flex-col gap-3">
+            <label
+              className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 cursor-pointer transition-colors ${
+                pdfFile ? 'border-indigo-300 bg-indigo-50' : 'border-zinc-200 hover:border-zinc-300'
+              }`}
+            >
+              <input
+                ref={pdfInputRef}
+                type="file"
+                accept=".pdf,application/pdf"
+                className="sr-only"
+                onChange={e => {
+                  setPdfFile(e.target.files?.[0] ?? null)
+                  setParseError(null)
+                }}
+              />
+              <svg
+                width="28" height="28" viewBox="0 0 24 24" fill="none"
+                stroke={pdfFile ? '#6366f1' : '#a1a1aa'}
+                strokeWidth="1.75" strokeLinecap="round" strokeLinejoin="round"
+              >
+                <path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z" />
+                <polyline points="14 2 14 8 20 8" />
+                <line x1="9" y1="13" x2="15" y2="13" />
+                <line x1="9" y1="17" x2="15" y2="17" />
+                <polyline points="9 9 10 9" />
+              </svg>
+              {pdfFile ? (
+                <span className="text-sm font-medium text-indigo-600">{pdfFile.name}</span>
+              ) : (
+                <div className="text-center">
+                  <span className="text-sm font-medium text-zinc-600">Choose a PDF statement</span>
+                  <p className="text-xs text-zinc-400 mt-0.5">or drag and drop</p>
+                </div>
+              )}
+            </label>
+            <p className="text-xs text-zinc-400">
+              Claude reads the PDF directly · ANZ, BNZ, ASB, Westpac · any format
+            </p>
+          </div>
+        ) : inputMode === 'paste' ? (
           <>
             <textarea
               value={pasteText}
@@ -461,38 +554,56 @@ export default function ImportWizard() {
               className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-800 placeholder-zinc-400 font-mono resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent"
             />
             <p className="text-xs text-zinc-400 -mt-2">
-              Works with any bank · ANZ, BNZ, ASB, Westpac · PDF copy-paste or CSV
+              Works with any bank · ANZ, BNZ, ASB, Westpac · Claude auto-detects the format
             </p>
           </>
         ) : (
-          <label
-            className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 cursor-pointer transition-colors ${
-              csvFile ? 'border-indigo-300 bg-indigo-50' : 'border-zinc-200 hover:border-zinc-300'
-            }`}
-          >
-            <input
-              ref={fileInputRef}
-              type="file"
-              accept=".csv,text/csv,.txt"
-              className="sr-only"
-              onChange={e => {
-                setCsvFile(e.target.files?.[0] ?? null)
-                setParseError(null)
-              }}
-            />
-            <svg
-              width="24" height="24" viewBox="0 0 24 24" fill="none"
-              stroke={csvFile ? '#6366f1' : '#a1a1aa'}
-              strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+          <div className="flex flex-col gap-3">
+            {/* Bank selector */}
+            <div className="flex flex-col gap-1.5">
+              <label className="text-xs font-medium text-zinc-600">Bank</label>
+              <select
+                value={csvBank}
+                onChange={e => setCsvBank(e.target.value as 'ANZ' | 'BNZ')}
+                className="w-full px-3 py-2.5 rounded-xl border border-zinc-200 bg-white text-sm text-zinc-700 focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent"
+              >
+                <option value="ANZ">ANZ</option>
+                <option value="BNZ">BNZ</option>
+              </select>
+            </div>
+
+            <label
+              className={`flex flex-col items-center justify-center gap-2 rounded-xl border-2 border-dashed px-4 py-8 cursor-pointer transition-colors ${
+                csvFile ? 'border-indigo-300 bg-indigo-50' : 'border-zinc-200 hover:border-zinc-300'
+              }`}
             >
-              <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
-            </svg>
-            {csvFile ? (
-              <span className="text-sm font-medium text-indigo-600">{csvFile.name}</span>
-            ) : (
-              <span className="text-sm text-zinc-400">Tap to choose a CSV file</span>
-            )}
-          </label>
+              <input
+                ref={fileInputRef}
+                type="file"
+                accept=".csv,text/csv,.txt"
+                className="sr-only"
+                onChange={e => {
+                  setCsvFile(e.target.files?.[0] ?? null)
+                  setParseError(null)
+                }}
+              />
+              <svg
+                width="24" height="24" viewBox="0 0 24 24" fill="none"
+                stroke={csvFile ? '#6366f1' : '#a1a1aa'}
+                strokeWidth="2" strokeLinecap="round" strokeLinejoin="round"
+              >
+                <path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12" />
+              </svg>
+              {csvFile ? (
+                <span className="text-sm font-medium text-indigo-600">{csvFile.name}</span>
+              ) : (
+                <span className="text-sm text-zinc-400">Tap to choose a CSV file</span>
+              )}
+            </label>
+            <p className="text-xs text-zinc-400">
+              Parsed directly — no AI needed for CSVs
+            </p>
+          </div>
         )}
 
         {parseError && (
@@ -501,15 +612,15 @@ export default function ImportWizard() {
           </div>
         )}
 
-        <Button
-          onClick={handleParse}
-          loading={parsing}
-          disabled={!canParse}
-        >
-          {parsing ? 'Parsing with Claude…' : 'Parse statement'}
+        <Button onClick={handleParse} loading={parsing} disabled={!canParse}>
+          {parsing
+            ? inputMode === 'csv' ? 'Parsing CSV…' : 'Parsing with Claude…'
+            : inputMode === 'csv' ? 'Parse CSV'
+            : inputMode === 'pdf' ? 'Parse PDF with Claude'
+            : 'Parse with Claude'}
         </Button>
 
-        {parsing && (
+        {parsing && inputMode !== 'csv' && (
           <p className="text-xs text-zinc-400 text-center -mt-2">
             Claude is reading your statement — usually takes a few seconds
           </p>
