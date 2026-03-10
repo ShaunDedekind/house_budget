@@ -1,9 +1,9 @@
-import Anthropic from '@anthropic-ai/sdk'
+import { GoogleGenerativeAI } from '@google/generative-ai'
 
 function getClient() {
-  const apiKey = process.env.ANTHROPIC_API_KEY
-  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set. Add it to .env.local and to your Vercel project environment variables.')
-  return new Anthropic({ apiKey })
+  const apiKey = process.env.GEMINI_API_KEY
+  if (!apiKey) throw new Error('GEMINI_API_KEY is not set. Add it to .env.local and to your Vercel project environment variables. Get a free key at https://aistudio.google.com/apikey')
+  return new GoogleGenerativeAI(apiKey)
 }
 
 export interface LLMTransaction {
@@ -25,13 +25,7 @@ export interface ParseResult {
 const SYSTEM_PROMPT = `You are a bank statement parser. Extract all transactions from raw bank statement text.
 Respond with ONLY valid JSON — no markdown fences, no explanation, nothing else.`
 
-const buildUserPrompt = (rawText: string) => `Parse every transaction from this bank statement.
-
-STATEMENT:
-${rawText}
-
-Return exactly this JSON structure:
-{
+const JSON_SCHEMA = `{
   "bank_detected": "ANZ" | "BNZ" | "ASB" | "Westpac" | "other" | null,
   "accounts": ["list of unique account identifiers found in the statement"],
   "date_range": { "from": "YYYY-MM-DD" | null, "to": "YYYY-MM-DD" | null },
@@ -45,9 +39,9 @@ Return exactly this JSON structure:
       "type": "debit" | "credit" | "transfer" | "unknown"
     }
   ]
-}
+}`
 
-Parsing rules:
+const PARSING_RULES = `Parsing rules:
 - ANZ credit card: a "Type" column of "D" = debit → negative amount; "C" = credit/payment → positive amount
 - BNZ: amounts are already signed (negative = expense, positive = income/transfer in)
 - Ignore serial/reference columns — especially scientific notation like 4.34667E+11 or 2.51126E+11
@@ -59,7 +53,7 @@ Parsing rules:
 - dates MUST be in YYYY-MM-DD format
 - "Online Payment - Thank You" type entries are transfers/payments → type "transfer", positive amount`
 
-function parseClaudeResponse(text: string): ParseResult {
+function parseGeminiResponse(text: string): ParseResult {
   const cleaned = text
     .replace(/^```json\s*/i, '')
     .replace(/^```\s*/i, '')
@@ -68,77 +62,54 @@ function parseClaudeResponse(text: string): ParseResult {
   try {
     return JSON.parse(cleaned) as ParseResult
   } catch {
-    throw new Error(`Claude returned invalid JSON: ${cleaned.slice(0, 200)}`)
+    throw new Error(`Gemini returned invalid JSON: ${cleaned.slice(0, 200)}`)
   }
 }
 
 export async function parseStatementText(rawText: string): Promise<ParseResult> {
-  const client = getClient()
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8096,
-    system: SYSTEM_PROMPT,
-    messages: [{ role: 'user', content: buildUserPrompt(rawText) }],
+  const genAI = getClient()
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-1.5-flash',
+    systemInstruction: SYSTEM_PROMPT,
   })
 
-  const content = response.content[0]
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude')
-  return parseClaudeResponse(content.text)
-}
+  const prompt = `Parse every transaction from this bank statement.
 
-const PDF_USER_PROMPT = `Parse every transaction from this bank statement PDF.
+STATEMENT:
+${rawText}
 
 Return exactly this JSON structure:
-{
-  "bank_detected": "ANZ" | "BNZ" | "ASB" | "Westpac" | "other" | null,
-  "accounts": ["list of unique account identifiers found in the statement"],
-  "date_range": { "from": "YYYY-MM-DD" | null, "to": "YYYY-MM-DD" | null },
-  "warnings": ["any issues e.g. missing dates, ambiguous data"],
-  "transactions": [
-    {
-      "date": "YYYY-MM-DD" | null,
-      "amount": -50.00,
-      "description": "cleaned merchant or payee name",
-      "account": "account identifier this transaction belongs to",
-      "type": "debit" | "credit" | "transfer" | "unknown"
-    }
-  ]
+${JSON_SCHEMA}
+
+${PARSING_RULES}`
+
+  const result = await model.generateContent(prompt)
+  return parseGeminiResponse(result.response.text())
 }
 
-Parsing rules:
-- ANZ credit card: a "Type" column of "D" = debit → negative amount; "C" = credit/payment → positive amount
-- BNZ: amounts are already signed (negative = expense, positive = income/transfer in)
-- Strip trailing location from descriptions: remove "Auckland Nz", "Glenfield Nz", "Sydney Au", "Christchurch Nz" etc.
-- Missing or blank dates → set date to null and add a warning
-- Include EVERY transaction — do not skip small ones
-- For BNZ: account identifier comes from the section header (e.g. "Flexi Joint - 02-1244-0241366-000")
-- For ANZ CC: account identifier is the card number shown in the Card column
-- dates MUST be in YYYY-MM-DD format
-- "Online Payment - Thank You" type entries are transfers/payments → type "transfer", positive amount`
-
 export async function parseStatementPdf(base64: string): Promise<ParseResult> {
-  const client = getClient()
-
-  const response = await client.messages.create({
-    model: 'claude-sonnet-4-6',
-    max_tokens: 8096,
-    system: SYSTEM_PROMPT,
-    messages: [
-      {
-        role: 'user',
-        content: [
-          {
-            type: 'document',
-            source: { type: 'base64', media_type: 'application/pdf', data: base64 },
-          } as any, // eslint-disable-line @typescript-eslint/no-explicit-any
-          { type: 'text', text: PDF_USER_PROMPT },
-        ],
-      },
-    ],
+  const genAI = getClient()
+  const model = genAI.getGenerativeModel({
+    model: 'gemini-1.5-flash',
+    systemInstruction: SYSTEM_PROMPT,
   })
 
-  const content = response.content[0]
-  if (content.type !== 'text') throw new Error('Unexpected response type from Claude')
-  return parseClaudeResponse(content.text)
+  const prompt = `Parse every transaction from this bank statement PDF.
+
+Return exactly this JSON structure:
+${JSON_SCHEMA}
+
+${PARSING_RULES}`
+
+  const result = await model.generateContent([
+    prompt,
+    {
+      inlineData: {
+        mimeType: 'application/pdf',
+        data: base64,
+      },
+    },
+  ])
+
+  return parseGeminiResponse(result.response.text())
 }
