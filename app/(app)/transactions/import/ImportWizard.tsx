@@ -281,7 +281,7 @@ export default function ImportWizard() {
       if (!pdfFile) { setParsing(false); return }
       sourceName = pdfFile.name
 
-      // Read binary → base64 for Claude document API; hash binary for dedup
+      // Read binary → base64 for Gemini document API; hash binary for dedup
       const buffer = await pdfFile.arrayBuffer()
       const hashBuffer = await crypto.subtle.digest('SHA-256', buffer)
       const hashHex = Array.from(new Uint8Array(hashBuffer))
@@ -309,7 +309,7 @@ export default function ImportWizard() {
 
       const res = await parseStatementAction(rawText)
       if (res.error || !res.result) {
-        setParseError(res.error ?? 'Unknown error from Claude')
+        setParseError(res.error ?? 'Unknown error from Gemini')
         setParsing(false)
         return
       }
@@ -537,7 +537,7 @@ export default function ImportWizard() {
               )}
             </label>
             <p className="text-xs text-zinc-400">
-              Claude reads the PDF directly · ANZ, BNZ, ASB, Westpac · any format
+              Reads the PDF directly · ANZ, BNZ, ASB, Westpac · any format
             </p>
           </div>
         ) : inputMode === 'paste' ? (
@@ -554,7 +554,7 @@ export default function ImportWizard() {
               className="w-full rounded-xl border border-zinc-200 bg-zinc-50 px-3 py-3 text-sm text-zinc-800 placeholder-zinc-400 font-mono resize-none focus:outline-none focus:ring-2 focus:ring-indigo-300 focus:border-transparent"
             />
             <p className="text-xs text-zinc-400 -mt-2">
-              Works with any bank · ANZ, BNZ, ASB, Westpac · Claude auto-detects the format
+              Works with any bank · ANZ, BNZ, ASB, Westpac · auto-detects the format
             </p>
           </>
         ) : (
@@ -614,15 +614,15 @@ export default function ImportWizard() {
 
         <Button onClick={handleParse} loading={parsing} disabled={!canParse}>
           {parsing
-            ? inputMode === 'csv' ? 'Parsing CSV…' : 'Parsing with Claude…'
+            ? inputMode === 'csv' ? 'Parsing CSV…' : 'Parsing…'
             : inputMode === 'csv' ? 'Parse CSV'
-            : inputMode === 'pdf' ? 'Parse PDF with Claude'
-            : 'Parse with Claude'}
+            : inputMode === 'pdf' ? 'Parse PDF'
+            : 'Parse Statement'}
         </Button>
 
         {parsing && inputMode !== 'csv' && (
           <p className="text-xs text-zinc-400 text-center -mt-2">
-            Claude is reading your statement — usually takes a few seconds
+            Reading your statement — usually takes a few seconds
           </p>
         )}
       </div>

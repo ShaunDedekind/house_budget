@@ -69,7 +69,7 @@ function parseGeminiResponse(text: string): ParseResult {
 export async function parseStatementText(rawText: string): Promise<ParseResult> {
   const genAI = getClient()
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.0-flash',
     systemInstruction: SYSTEM_PROMPT,
   })
 
@@ -90,7 +90,7 @@ ${PARSING_RULES}`
 export async function parseStatementPdf(base64: string): Promise<ParseResult> {
   const genAI = getClient()
   const model = genAI.getGenerativeModel({
-    model: 'gemini-1.5-flash',
+    model: 'gemini-2.0-flash',
     systemInstruction: SYSTEM_PROMPT,
   })
 
