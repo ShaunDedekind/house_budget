@@ -1,5 +1,11 @@
 import Anthropic from '@anthropic-ai/sdk'
 
+function getClient() {
+  const apiKey = process.env.ANTHROPIC_API_KEY
+  if (!apiKey) throw new Error('ANTHROPIC_API_KEY is not set. Add it to .env.local and to your Vercel project environment variables.')
+  return new Anthropic({ apiKey })
+}
+
 export interface LLMTransaction {
   date: string | null       // ISO YYYY-MM-DD or null if not parseable
   amount: number            // negative = debit/expense, positive = credit/income
@@ -67,7 +73,7 @@ function parseClaudeResponse(text: string): ParseResult {
 }
 
 export async function parseStatementText(rawText: string): Promise<ParseResult> {
-  const client = new Anthropic()
+  const client = getClient()
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
@@ -112,7 +118,7 @@ Parsing rules:
 - "Online Payment - Thank You" type entries are transfers/payments → type "transfer", positive amount`
 
 export async function parseStatementPdf(base64: string): Promise<ParseResult> {
-  const client = new Anthropic()
+  const client = getClient()
 
   const response = await client.messages.create({
     model: 'claude-sonnet-4-6',
